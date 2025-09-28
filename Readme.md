@@ -34,11 +34,26 @@ https://youtu.be/XvhCqJBBD2g
 To start the project, run the following command from the root directory:
 
 ```sh
-docker-compose up
+docker compose up
 ```
 
 This will initialize the PostgreSQL database with migrations from `./migrations` and start a NATS-IO server with WebSocket support.
 
+Then just build the service:
+
+```sh
+go build cmd/serve/main.go
+
+./main
+```
+
+The service expects a [yaml configuration file](./config.yaml) in the same base path of the binary you are running.
+
+To run the tests just run the following command:
+
+```sh
+go test ./...
+```
 ### Service Configuration
 
 **Database configuration:**
