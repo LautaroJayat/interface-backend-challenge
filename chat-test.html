@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Test Client</title>
+    <script type="module">
+        import { wsconnect } from "https://esm.run/@nats-io/nats-core";
+        window.nats = { wsconnect };
+    </script>
+</head>
+<body>
+    <h1>Chat Test Client</h1>
+
+    <div>
+        <label>Select User:</label>
+        <select id="userSelect">
+            <option value="alice">Alice</option>
+            <option value="bob">Bob</option>
+            <option value="charlie">Charlie</option>
+            <option value="diana">Diana</option>
+            <option value="eve_status">Eve Status</option>
+            <option value="frank_status">Frank Status</option>
+        </select>
+        <button onclick="connectUser()">Connect</button>
+        <span id="status">Not connected</span>
+    </div>
+
+    <div>
+        <label>Chat with:</label>
+        <input type="text" id="chatPartner" placeholder="Enter user ID (e.g., bob)" />
+        <button onclick="startChat()">Start Chat</button>
+    </div>
+
+    <div>
+        <h3>Messages</h3>
+        <div id="messages" style="border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 10px; margin: 10px 0;"></div>
+    </div>
+
+    <div>
+        <input type="text" id="messageInput" placeholder="Type your message..." style="width: 300px;" />
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <div>
+        <h3>Debug Info</h3>
+        <div id="debug" style="border: 1px solid #eee; padding: 10px; margin: 10px 0; font-family: monospace; font-size: 12px;"></div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let currentChatPartner = null;
+        let currentChatId = null;
+        let natsConnection = null;
+        let messageSubscription = null;
+
+        const API_BASE = 'http://localhost:8081';
+        const NATS_URL = 'ws://localhost:8080';
+
+        function log(message) {
+            const debug = document.getElementById('debug');
+            const timestamp = new Date().toISOString();
+            debug.innerHTML = `[${timestamp}] ${message}<br>` + debug.innerHTML;
+            console.log(message);
+        }
+
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+            log(`Status: ${message}`);
+        }
+
+        async function connectUser() {
+            const userSelect = document.getElementById('userSelect');
+            currentUser = userSelect.value;
+
+            // Close existing NATS connection if any
+            if (natsConnection) {
+                try {
+                    await natsConnection.close();
+                } catch (e) {
+                    log(`Error closing previous connection: ${e.message}`);
+                }
+            }
+
+            // Connect to NATS WebSocket
+            try {
+                updateStatus('Connecting to NATS...');
+
+                natsConnection = await nats.wsconnect({
+                    servers: [NATS_URL]
+                });
+
+                updateStatus(`Connected as ${currentUser}`);
+                log('NATS connection established');
+
+                // Subscribe to messages for this user
+                const subject = `messages.${currentUser}`;
+                messageSubscription = natsConnection.subscribe(subject);
+
+                log(`Subscribed to ${subject}`);
+
+                // Process incoming messages
+                (async () => {
+                    for await (const msg of messageSubscription) {
+                        try {
+                            // Convert Uint8Array to string
+                            const textDecoder = new TextDecoder();
+                            const jsonString = textDecoder.decode(msg.data);
+                            const data = JSON.parse(jsonString);
+
+                            log(`NATS message received: ${JSON.stringify(data)}`);
+
+                            // Handle incoming message envelope
+                            if (data.type === 'new_message' && data.data) {
+                                displayMessage(data.data);
+                            }
+                        } catch (e) {
+                            log(`Error parsing NATS message: ${e.message}`);
+                            log(`Raw message: ${msg.data}`);
+                        }
+                    }
+                })();
+
+            } catch (error) {
+                updateStatus(`Failed to connect: ${error.message}`);
+                log(`NATS connection error: ${error}`);
+            }
+        }
+
+        function startChat() {
+            const partner = document.getElementById('chatPartner').value.trim();
+            if (!partner) {
+                alert('Please enter a chat partner');
+                return;
+            }
+            if (!currentUser) {
+                alert('Please connect as a user first');
+                return;
+            }
+
+            currentChatPartner = partner;
+            currentChatId = computeChatId(currentUser, partner);
+
+            log(`Starting chat between ${currentUser} and ${partner} (chatId: ${currentChatId})`);
+
+            // Load existing messages
+            loadMessages();
+        }
+
+        function computeChatId(user1, user2) {
+            // Use the same logic as the backend: sorted users separated by ---
+            return user1 < user2 ? `${user1}---${user2}` : `${user2}---${user1}`;
+        }
+
+        async function loadMessages() {
+            if (!currentChatId) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/chats/${currentChatId}/messages`, {
+                    headers: {
+                        'X-User-ID': currentUser,
+                        'X-User-Email': `${currentUser}@test.com`,
+                        'X-User-Handler': `@${currentUser}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`Loaded ${data.messages ? data.messages.length : 0} messages`);
+
+                    // Clear existing messages
+                    document.getElementById('messages').innerHTML = '';
+
+                    // Display messages (reverse order since API returns newest first)
+                    if (data.messages && data.messages.length > 0) {
+                        data.messages.reverse().forEach(msg => displayMessage(msg));
+                    }
+                } else {
+                    log(`Failed to load messages: ${response.status} ${response.statusText}`);
+                }
+            } catch (error) {
+                log(`Error loading messages: ${error.message}`);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+
+            if (!content) return;
+            if (!currentUser || !currentChatPartner) {
+                alert('Please start a chat first');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/chats/${currentChatPartner}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-User-ID': currentUser,
+                        'X-User-Email': `${currentUser}@test.com`,
+                        'X-User-Handler': `@${currentUser}`
+                    },
+                    body: JSON.stringify({ content })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`Message sent: ${content}`);
+                    input.value = '';
+
+                    // Display the sent message immediately
+                    displayMessage(data);
+                } else {
+                    const errorData = await response.text();
+                    log(`Failed to send message: ${response.status} ${response.statusText} - ${errorData}`);
+                }
+            } catch (error) {
+                log(`Error sending message: ${error.message}`);
+            }
+        }
+
+        function displayMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageElement = document.createElement('div');
+
+            const timestamp = new Date(message.created_at).toLocaleTimeString();
+            const isOwnMessage = message.sender_id === currentUser;
+
+            messageElement.innerHTML = `
+                <div style="margin: 5px 0; padding: 5px; ${isOwnMessage ? 'text-align: right; background: #e3f2fd;' : 'background: #f5f5f5;'}">
+                    <strong>${message.sender_id}</strong> <small>(${timestamp})</small><br>
+                    ${message.content}
+                </div>
+            `;
+
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Allow sending message with Enter key
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Auto-connect as Alice on page load
+        window.onload = async function() {
+            document.getElementById('userSelect').value = 'alice';
+            await connectUser();
+        };
+    </script>
+</body>
+</html>

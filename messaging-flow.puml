@@ -1,0 +1,68 @@
+@startuml Core Messaging System Flow
+
+title Core Messaging System - How Users Communicate
+
+actor "Alice" as Alice
+actor "Bob" as Bob
+participant "messaging-app" as App
+participant "PostgreSQL" as DB
+participant "NATS Server" as NATS
+
+== System Initialization ==
+
+note over Alice, NATS
+**Users connect to the messaging system**
+end note
+
+Bob -> NATS: Subscribe to real-time messages
+NATS --> Bob: Subscription confirmed
+
+Alice -> App: Check existing conversations
+App -> DB: Query chat sessions
+DB --> App: Return chat list
+App --> Alice: Chat list response
+
+Bob -> App: Get chat list
+App -> DB: Query updated sessions
+DB --> App: Sessions with unread counts
+App --> Bob: Updated chat list
+
+== Core Messaging Flow ==
+
+note over Alice, NATS
+**Alice sends a message to Bob**
+end note
+
+Alice -> App: Send message to Bob
+App -> DB: Save message
+DB --> App: Message persisted
+App -> NATS: Publish real-time notification
+NATS -->> Bob: Instant message delivery
+App --> Alice: Message sent confirmation
+
+== Bob Responds ==
+
+note over Bob, NATS
+**Bob reads and responds to the message**
+end note
+
+Bob -> App: Retrieve conversation history
+App -> DB: Query messages
+DB --> App: Message history
+App --> Bob: Conversation messages
+
+Bob -> App: Mark messages as read
+App -> DB: Update message status
+DB --> App: Status updated
+App -> NATS: Publish status update
+NATS -->> Alice: Read receipt notification
+App --> Bob: Read confirmation
+
+Bob -> App: Send reply to Alice
+App -> DB: Save reply message
+DB --> App: Reply persisted
+App -> NATS: Publish to Alice
+NATS -->> Alice: Instant reply delivery
+App --> Bob: Reply sent confirmation
+
+@enduml
